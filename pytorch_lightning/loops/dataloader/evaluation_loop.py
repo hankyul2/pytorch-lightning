@@ -86,8 +86,8 @@ class EvaluationLoop(DataLoaderLoop):
         return []
 
     def on_run_start(self, *args: Any, **kwargs: Any) -> None:
-        """Reset the results and metrics, runs the ``_on_evaluation_model_eval``, ``_on_evaluation_start``
-        and ``_on_evaluation_epoch_start`` hooks."""
+        """Reset the results and metrics, runs the ``_on_evaluation_model_eval``, ``_on_evaluation_start`` and
+        ``_on_evaluation_epoch_start`` hooks."""
         void(*args, **kwargs)
 
         if self.trainer.state.fn in (TrainerFn.VALIDATING, TrainerFn.TESTING):
