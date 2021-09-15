@@ -78,7 +78,9 @@ class PredictionLoop(DataLoaderLoop):
         self.epoch_batch_indices = []
 
     def on_run_start(self) -> None:
-        """Calls ``on_predict_start`` hook."""
+        """Reset the results and metrics, calls ``on_predict_start`` hook."""
+        self.trainer.logger_connector.reset_results()
+        self.trainer.logger_connector.reset_metrics()
         self.on_predict_start()
 
     def advance(self, *args: Any, **kwargs: Any) -> None:
