@@ -19,7 +19,6 @@ from torch.utils.data.dataloader import DataLoader
 from pytorch_lightning.loops.dataloader import DataLoaderLoop
 from pytorch_lightning.loops.epoch import EvaluationEpochLoop
 from pytorch_lightning.trainer.connectors.logger_connector.result import _OUT_DICT, ResultCollection
-from pytorch_lightning.trainer.states import TrainerFn
 from pytorch_lightning.utilities.model_helpers import is_overridden
 from pytorch_lightning.utilities.types import EPOCH_OUTPUT
 
@@ -86,13 +85,9 @@ class EvaluationLoop(DataLoaderLoop):
         return []
 
     def on_run_start(self, *args: Any, **kwargs: Any) -> None:
-        """Reset the results and metrics, runs the ``_on_evaluation_model_eval``, ``_on_evaluation_start`` and
-        ``_on_evaluation_epoch_start`` hooks."""
+        """Runs the ``_on_evaluation_model_eval``, ``_on_evaluation_start`` and ``_on_evaluation_epoch_start``
+        hooks."""
         void(*args, **kwargs)
-
-        if self.trainer.state.fn in (TrainerFn.VALIDATING, TrainerFn.TESTING):
-            self.trainer.logger_connector.reset_results()
-            self.trainer.logger_connector.reset_metrics()
 
         # hook
         self._on_evaluation_model_eval()
