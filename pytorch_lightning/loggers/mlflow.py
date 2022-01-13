@@ -33,7 +33,7 @@ try:
     from mlflow.tracking import context, MlflowClient
     from mlflow.utils.mlflow_tags import MLFLOW_RUN_NAME
 # todo: there seems to be still some remaining import error with Conda env
-except ImportError:
+except ModuleNotFoundError:
     _MLFLOW_AVAILABLE = False
     mlflow, MlflowClient, context = None, None, None
     MLFLOW_RUN_NAME = "mlflow.runName"
@@ -100,7 +100,7 @@ class MLFlowLogger(LightningLoggerBase):
             default.
 
     Raises:
-        ImportError:
+        ModuleNotFoundError:
             If required MLFlow package is not installed on the device.
     """
 
@@ -117,7 +117,7 @@ class MLFlowLogger(LightningLoggerBase):
         artifact_location: Optional[str] = None,
     ):
         if mlflow is None:
-            raise ImportError(
+            raise ModuleNotFoundError(
                 "You want to use `mlflow` logger which is not installed yet, install it with `pip install mlflow`."
             )
         super().__init__()
@@ -196,7 +196,7 @@ class MLFlowLogger(LightningLoggerBase):
         for k, v in params.items():
             if len(str(v)) > 250:
                 rank_zero_warn(
-                    f"Mlflow only allows parameters with up to 250 characters. Discard {k}={v}", RuntimeWarning
+                    f"Mlflow only allows parameters with up to 250 characters. Discard {k}={v}", category=RuntimeWarning
                 )
                 continue
 
@@ -219,7 +219,7 @@ class MLFlowLogger(LightningLoggerBase):
                 rank_zero_warn(
                     "MLFlow only allows '_', '/', '.' and ' ' special characters in metric name."
                     f" Replacing {k} with {new_k}.",
-                    RuntimeWarning,
+                    category=RuntimeWarning,
                 )
                 k = new_k
 

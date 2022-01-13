@@ -16,6 +16,7 @@ import glob
 import os
 import shutil
 import sys
+import warnings
 from importlib.util import module_from_spec, spec_from_file_location
 
 import pt_lightning_sphinx_theme
@@ -26,10 +27,13 @@ PATH_RAW_NB = os.path.join(PATH_ROOT, "_notebooks")
 sys.path.insert(0, os.path.abspath(PATH_ROOT))
 sys.path.append(os.path.join(PATH_RAW_NB, ".actions"))
 
+_SHOULD_COPY_NOTEBOOKS = True
+
 try:
     from helpers import HelperCLI
 except Exception:
-    raise ModuleNotFoundError("To build the code, please run: `git submodule update --init --recursive`")
+    _SHOULD_COPY_NOTEBOOKS = False
+    warnings.warn("To build the code, please run: `git submodule update --init --recursive`", stacklevel=2)
 
 FOLDER_GENERATED = "generated"
 SPHINX_MOCK_REQUIREMENTS = int(os.environ.get("SPHINX_MOCK_REQUIREMENTS", True))
@@ -41,8 +45,8 @@ about = module_from_spec(spec)
 spec.loader.exec_module(about)
 
 # -- Project documents -------------------------------------------------------
-
-HelperCLI.copy_notebooks(PATH_RAW_NB, PATH_HERE, "notebooks")
+if _SHOULD_COPY_NOTEBOOKS:
+    HelperCLI.copy_notebooks(PATH_RAW_NB, PATH_HERE, "notebooks", patterns=[".", "course_UvA-DL", "lightning_examples"])
 
 
 def _transform_changelog(path_in: str, path_out: str) -> None:
@@ -269,6 +273,8 @@ intersphinx_mapping = {
     "numpy": ("https://numpy.org/doc/stable/", None),
     "PIL": ("https://pillow.readthedocs.io/en/stable/", None),
     "torchmetrics": ("https://torchmetrics.readthedocs.io/en/stable/", None),
+    "fairscale": ("https://fairscale.readthedocs.io/en/latest/", None),
+    "graphcore": ("https://docs.graphcore.ai/en/latest/", None),
 }
 
 # -- Options for todo extension ----------------------------------------------
@@ -369,13 +375,11 @@ from torch import nn
 import pytorch_lightning as pl
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.utilities import (
-    _NATIVE_AMP_AVAILABLE,
     _APEX_AVAILABLE,
     _XLA_AVAILABLE,
     _TPU_AVAILABLE,
     _TORCHVISION_AVAILABLE,
-    _TORCH_BFLOAT_AVAILABLE,
-    _TORCH_CPU_AMP_AVAILABLE,
+    _TORCH_GREATER_EQUAL_1_10,
     _module_available,
 )
 _JSONARGPARSE_AVAILABLE = _module_available("jsonargparse")

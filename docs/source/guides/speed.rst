@@ -43,17 +43,17 @@ GPU training
 
 Lightning supports a variety of plugins to further speed up distributed GPU training. Most notably:
 
-* :class:`~pytorch_lightning.plugins.training_type.DDPPlugin`
-* :class:`~pytorch_lightning.plugins.training_type.DDPShardedPlugin`
-* :class:`~pytorch_lightning.plugins.training_type.DeepSpeedPlugin`
+* :class:`~pytorch_lightning.strategies.DDPStrategy`
+* :class:`~pytorch_lightning.strategies.DDPShardedStrategy`
+* :class:`~pytorch_lightning.strategies.DeepSpeedStrategy`
 
 .. code-block:: python
 
     # run on 1 gpu
     trainer = Trainer(gpus=1)
 
-    # train on 8 gpus, using DDP plugin
-    trainer = Trainer(gpus=8, accelerator="ddp")
+    # train on 8 gpus, using the DDP strategy
+    trainer = Trainer(gpus=8, strategy="ddp")
 
     # train on multiple GPUs across nodes (uses 8 gpus in total)
     trainer = Trainer(gpus=2, num_nodes=4)
@@ -67,39 +67,39 @@ Refer to :doc:`Advanced GPU Optimized Training for more details <../advanced/adv
 
 Prefer DDP over DP
 ^^^^^^^^^^^^^^^^^^
-:class:`~pytorch_lightning.plugins.training_type.DataParallelPlugin` performs three GPU transfers for EVERY batch:
+:class:`~pytorch_lightning.strategies.DataParallelStrategy` performs three GPU transfers for EVERY batch:
 
 1. Copy model to device.
 2. Copy data to device.
-3. Copy outputs of each device back to master.
+3. Copy outputs of each device back to main device.
 
-Whereas :class:`~pytorch_lightning.plugins.training_type.DDPPlugin` only performs 1 transfer to sync gradients, making DDP MUCH faster than DP.
+Whereas :class:`~pytorch_lightning.strategies.DDPStrategy` only performs 1 transfer to sync gradients, making DDP MUCH faster than DP.
 
 
-When using DDP plugins, set find_unused_parameters=False
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+When using DDP strategies, set find_unused_parameters=False
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 By default we have set ``find_unused_parameters`` to True for compatibility reasons that have been observed in the past (see the `discussion <https://github.com/PyTorchLightning/pytorch-lightning/discussions/6219>`_ for more details).
 This by default comes with a performance hit, and can be disabled in most cases.
 
 .. tip::
-    It applies to all DDP plugins that support ``find_unused_parameters`` as input.
+    It applies to all DDP strategies that support ``find_unused_parameters`` as input.
 
 .. code-block:: python
 
-    from pytorch_lightning.plugins import DDPPlugin
+    from pytorch_lightning.strategies import DDPStrategy
 
     trainer = pl.Trainer(
         gpus=2,
-        plugins=DDPPlugin(find_unused_parameters=False),
+        strategy=DDPStrategy(find_unused_parameters=False),
     )
 
 .. code-block:: python
 
-    from pytorch_lightning.plugins import DDPSpawnPlugin
+    from pytorch_lightning.strategies import DDPSpawnStrategy
 
     trainer = pl.Trainer(
         gpus=2,
-        plugins=DDPSpawnPlugin(find_unused_parameters=False),
+        strategy=DDPSpawnStrategy(find_unused_parameters=False),
     )
 
 When using DDP on a multi-node cluster, set NCCL parameters
@@ -145,11 +145,24 @@ some references, [`1 <https://discuss.pytorch.org/t/guidelines-for-assigning-num
 
 The best thing to do is to increase the ``num_workers`` slowly and stop once you see no more improvement in your training speed.
 
+For debugging purposes or for dataloaders that load very small datasets, it is desirable to set ``num_workers=0``. However, this will always log a warning for every dataloader with ``num_workers <= min(2, os.cpu_count())``. In such cases, you can specifically filter this warning by using:
+
+.. code-block:: python
+
+    import warnings
+
+    warnings.filterwarnings("ignore", ".*Consider increasing the value of the `num_workers` argument*")
+
+    # or to ignore all warnings which could be false positives
+    from pytorch_lightning.utilities.warnings import PossibleUserWarning
+
+    warnings.filterwarnings("ignore", category=PossibleUserWarning)
+
 Spawn
 """""
-When using ``accelerator=ddp_spawn`` or training on TPUs, the way multiple GPUs/TPU cores are used is by calling ``.spawn()`` under the hood.
+When using ``strategy=ddp_spawn`` or training on TPUs, the way multiple GPUs/TPU cores are used is by calling ``.spawn()`` under the hood.
 The problem is that PyTorch has issues with ``num_workers > 0`` when using ``.spawn()``. For this reason we recommend you
-use ``accelerator=ddp`` so you can increase the ``num_workers``, however your script has to be callable like so:
+use ``strategy=ddp`` so you can increase the ``num_workers``, however your script has to be callable like so:
 
 .. code-block:: bash
 
@@ -214,7 +227,7 @@ Lightning offers mixed precision training for GPUs and CPUs, as well as bfloat16
 
 
 .. testcode::
-    :skipif: not _APEX_AVAILABLE and not _NATIVE_AMP_AVAILABLE or not torch.cuda.is_available()
+    :skipif: torch.cuda.device_count() < 4
 
     # 16-bit precision
     trainer = Trainer(precision=16, gpus=4)
@@ -323,7 +336,7 @@ If you don't want to check 100% of the training/validation/test set set these fl
 
 If you also pass ``shuffle=True`` to the dataloader, a different random subset of your dataset will be used for each epoch; otherwise the same subset will be used for all epochs.
 
-.. note:: ``limit_train_batches``, ``limit_val_batches`` and ``limit_test_batches`` will be overwritten by ``overfit_batches`` if ``overfit_batches`` > 0. ``limit_val_batches`` will be ignored if ``fast_dev_run=True``.
+.. note:: ``limit_train_batches`` will be overwritten by ``overfit_batches`` if ``overfit_batches > 0`` and will turn off validation.
 
 .. note:: If you set ``limit_val_batches=0``, validation will be disabled.
 

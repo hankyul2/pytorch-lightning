@@ -17,25 +17,30 @@ import os
 import pickle
 from argparse import Namespace
 from dataclasses import dataclass
+from enum import Enum
 from unittest import mock
 
 import cloudpickle
 import pytest
 import torch
 from fsspec.implementations.local import LocalFileSystem
-from omegaconf import Container, OmegaConf
 from torch.utils.data import DataLoader
 
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.core.datamodule import LightningDataModule
 from pytorch_lightning.core.saving import load_hparams_from_yaml, save_hparams_to_yaml
-from pytorch_lightning.utilities import _HYDRA_EXPERIMENTAL_AVAILABLE, AttributeDict, is_picklable
+from pytorch_lightning.utilities import _HYDRA_EXPERIMENTAL_AVAILABLE, _OMEGACONF_AVAILABLE, AttributeDict, is_picklable
 from pytorch_lightning.utilities.exceptions import MisconfigurationException
 from tests.helpers import BoringModel, RandomDataset
+from tests.helpers.runif import RunIf
 
 if _HYDRA_EXPERIMENTAL_AVAILABLE:
     from hydra.experimental import compose, initialize
+
+if _OMEGACONF_AVAILABLE:
+    from omegaconf import Container, OmegaConf
+    from omegaconf.dictconfig import DictConfig
 
 
 class SaveHparamsModel(BoringModel):
@@ -115,6 +120,7 @@ def test_dict_hparams(tmpdir, cls):
     _run_standard_hparams_test(tmpdir, model, cls)
 
 
+@RunIf(omegaconf=True)
 @pytest.mark.parametrize("cls", [SaveHparamsModel, SaveHparamsDecoratedModel])
 def test_omega_conf_hparams(tmpdir, cls):
     # init model
@@ -247,6 +253,13 @@ class SubClassBoringModel(CustomBoringModel):
         self.save_hyperparameters()
 
 
+class NonSavingSubClassBoringModel(CustomBoringModel):
+    any_other_loss = torch.nn.CrossEntropyLoss()
+
+    def __init__(self, *args, subclass_arg=1200, **kwargs):
+        super().__init__(*args, **kwargs)
+
+
 class SubSubClassBoringModel(SubClassBoringModel):
     pass
 
@@ -266,10 +279,17 @@ class UnconventionalArgsBoringModel(CustomBoringModel):
         obj.save_hyperparameters()
 
 
-class DictConfSubClassBoringModel(SubClassBoringModel):
-    def __init__(self, *args, dict_conf=OmegaConf.create(dict(my_param="something")), **kwargs):
-        super().__init__(*args, **kwargs)
-        self.save_hyperparameters()
+if _OMEGACONF_AVAILABLE:
+
+    class DictConfSubClassBoringModel(SubClassBoringModel):
+        def __init__(self, *args, dict_conf=OmegaConf.create(dict(my_param="something")), **kwargs):
+            super().__init__(*args, **kwargs)
+            self.save_hyperparameters()
+
+else:
+
+    class DictConfSubClassBoringModel:
+        ...
 
 
 @pytest.mark.parametrize(
@@ -277,10 +297,11 @@ class DictConfSubClassBoringModel(SubClassBoringModel):
     [
         CustomBoringModel,
         SubClassBoringModel,
+        NonSavingSubClassBoringModel,
         SubSubClassBoringModel,
         AggSubClassBoringModel,
         UnconventionalArgsBoringModel,
-        DictConfSubClassBoringModel,
+        pytest.param(DictConfSubClassBoringModel, marks=RunIf(omegaconf=True)),
     ],
 )
 def test_collect_init_arguments(tmpdir, cls):
@@ -296,7 +317,7 @@ def test_collect_init_arguments(tmpdir, cls):
     model = cls(batch_size=179, **extra_args)
     assert model.hparams.batch_size == 179
 
-    if isinstance(model, SubClassBoringModel):
+    if isinstance(model, (SubClassBoringModel, NonSavingSubClassBoringModel)):
         assert model.hparams.subclass_arg == 1200
 
     if isinstance(model, AggSubClassBoringModel):
@@ -373,31 +394,6 @@ def test_collect_init_arguments_with_local_vars(cls):
     assert model.hparams["arg2"] == 2
 
 
-# @pytest.mark.parametrize("cls,config", [
-#     (SaveHparamsModel, Namespace(my_arg=42)),
-#     (SaveHparamsModel, dict(my_arg=42)),
-#     (SaveHparamsModel, OmegaConf.create(dict(my_arg=42))),
-#     (AssignHparamsModel, Namespace(my_arg=42)),
-#     (AssignHparamsModel, dict(my_arg=42)),
-#     (AssignHparamsModel, OmegaConf.create(dict(my_arg=42))),
-# ])
-# def test_single_config_models(tmpdir, cls, config):
-#     """ Test that the model automatically saves the arguments passed into the constructor """
-#     model = cls(config)
-#
-#     # no matter how you do it, it should be assigned
-#     assert model.hparams.my_arg == 42
-#
-#     # verify that the checkpoint saved the correct values
-#     trainer = Trainer(default_root_dir=tmpdir, max_epochs=2, overfit_batches=0.5)
-#     trainer.fit(model)
-#
-#     # verify that model loads correctly
-#     raw_checkpoint_path = _raw_checkpoint_path(trainer)
-#     model = cls.load_from_checkpoint(raw_checkpoint_path)
-#     assert model.hparams.my_arg == 42
-
-
 class AnotherArgModel(BoringModel):
     def __init__(self, arg1):
         super().__init__()
@@ -469,22 +465,41 @@ def test_hparams_pickle_warning(tmpdir):
 
 
 def test_hparams_save_yaml(tmpdir):
+    class Options(str, Enum):
+        option1name = "option1val"
+        option2name = "option2val"
+        option3name = "option3val"
+
     hparams = dict(
-        batch_size=32, learning_rate=0.001, data_root="./any/path/here", nasted=dict(any_num=123, anystr="abcd")
+        batch_size=32,
+        learning_rate=0.001,
+        data_root="./any/path/here",
+        nested=dict(any_num=123, anystr="abcd"),
+        switch=Options.option3name,
     )
     path_yaml = os.path.join(tmpdir, "testing-hparams.yaml")
 
+    def _compare_params(loaded_params, default_params: dict):
+        assert isinstance(loaded_params, (dict, DictConfig))
+        assert loaded_params.keys() == default_params.keys()
+        for k, v in default_params.items():
+            if isinstance(v, Enum):
+                assert v.name == loaded_params[k]
+            else:
+                assert v == loaded_params[k]
+
     save_hparams_to_yaml(path_yaml, hparams)
-    assert load_hparams_from_yaml(path_yaml, use_omegaconf=False) == hparams
+    _compare_params(load_hparams_from_yaml(path_yaml, use_omegaconf=False), hparams)
 
     save_hparams_to_yaml(path_yaml, Namespace(**hparams))
-    assert load_hparams_from_yaml(path_yaml, use_omegaconf=False) == hparams
+    _compare_params(load_hparams_from_yaml(path_yaml, use_omegaconf=False), hparams)
 
     save_hparams_to_yaml(path_yaml, AttributeDict(hparams))
-    assert load_hparams_from_yaml(path_yaml, use_omegaconf=False) == hparams
+    _compare_params(load_hparams_from_yaml(path_yaml, use_omegaconf=False), hparams)
 
-    save_hparams_to_yaml(path_yaml, OmegaConf.create(hparams))
-    assert load_hparams_from_yaml(path_yaml) == hparams
+    if _OMEGACONF_AVAILABLE:
+        save_hparams_to_yaml(path_yaml, OmegaConf.create(hparams))
+        _compare_params(load_hparams_from_yaml(path_yaml), hparams)
 
 
 class NoArgsSubClassBoringModel(CustomBoringModel):
@@ -503,7 +518,7 @@ def test_model_nohparams_train_test(tmpdir, cls):
     trainer.fit(model, train_loader)
 
     test_loader = DataLoader(RandomDataset(32, 64), batch_size=32)
-    trainer.test(test_dataloaders=test_loader)
+    trainer.test(dataloaders=test_loader)
 
 
 def test_model_ignores_non_exist_kwargument(tmpdir):
@@ -677,6 +692,14 @@ def test_empty_hparams_container(tmpdir):
     assert not model.hparams
 
 
+def test_hparams_name_from_container(tmpdir):
+    """Test that save_hyperparameters(container) captures the name of the argument correctly."""
+    model = HparamsKwargsContainerModel(a=1, b=2)
+    assert model._hparams_name is None
+    model = HparamsNamespaceContainerModel(Namespace(a=1, b=2))
+    assert model._hparams_name == "config"
+
+
 @dataclass
 class DataClassModel(BoringModel):
 
@@ -740,7 +763,10 @@ def test_adding_datamodule_hparams(tmpdir, model, data):
     # Merged hparams were logged
     merged_hparams = copy.deepcopy(org_model_hparams)
     merged_hparams.update(org_data_hparams)
-    mock_logger.log_hyperparams.assert_called_with(merged_hparams)
+    if merged_hparams:
+        mock_logger.log_hyperparams.assert_called_with(merged_hparams)
+    else:
+        mock_logger.log_hyperparams.assert_not_called()
 
 
 def test_no_datamodule_for_hparams(tmpdir):

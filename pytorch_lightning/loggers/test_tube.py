@@ -83,7 +83,7 @@ class TestTubeLogger(LightningLoggerBase):
         prefix: A string to put at the beginning of metric keys.
 
     Raises:
-        ImportError:
+        ModuleNotFoundError:
             If required TestTube package is not installed on the device.
     """
 
@@ -106,7 +106,7 @@ class TestTubeLogger(LightningLoggerBase):
             " `pytorch_lightning.loggers.TensorBoardLogger` as an alternative."
         )
         if Experiment is None:
-            raise ImportError(
+            raise ModuleNotFoundError(
                 "You want to use `test_tube` logger which is not installed yet,"
                 " install it with `pip install test-tube`."
             )
@@ -176,7 +176,6 @@ class TestTubeLogger(LightningLoggerBase):
                     "Could not log computational graph since neither the"
                     " `model.example_input_array` attribute is set nor"
                     " `input_array` was given",
-                    UserWarning,
                 )
 
     @rank_zero_only

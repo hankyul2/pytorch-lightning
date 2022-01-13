@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import logging
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -23,8 +24,6 @@ from torch import Tensor
 from torch.utils.hooks import RemovableHandle
 
 import pytorch_lightning as pl
-from pytorch_lightning.utilities import AMPType, DeviceType, ModelSummaryMode, rank_zero_deprecation
-from pytorch_lightning.utilities.exceptions import MisconfigurationException
 from pytorch_lightning.utilities.imports import _TORCH_GREATER_EQUAL_1_8
 from pytorch_lightning.utilities.warnings import WarningCache
 
@@ -130,13 +129,6 @@ class ModelSummary:
 
     Args:
         model: The model to summarize (also referred to as the root module).
-        mode: Can be one of
-
-            - `top` (default): only the top-level modules will be recorded (the children of the root module)
-            - `full`: summarizes all layers and their submodules in the root module
-
-            .. deprecated:: v1.4
-                This parameter was deprecated in v1.4 in favor of `max_depth` and will be removed in v1.6.
 
         max_depth: Maximum depth of modules to show. Use -1 to show all modules or 0 to show no
             summary. Defaults to 1.
@@ -186,21 +178,8 @@ class ModelSummary:
         0.530     Total estimated model params size (MB)
     """
 
-    def __init__(self, model: "pl.LightningModule", mode: Optional[str] = None, max_depth: Optional[int] = 1) -> None:
+    def __init__(self, model: "pl.LightningModule", max_depth: int = 1) -> None:
         self._model = model
-
-        # temporary mapping from mode to max_depth
-        if max_depth is None or mode is not None:
-            if mode in ModelSummaryMode.supported_types():
-                max_depth = ModelSummaryMode.get_max_depth(mode)
-                rank_zero_deprecation(
-                    "Argument `mode` in `ModelSummary` is deprecated in v1.4"
-                    f" and will be removed in v1.6. Use `max_depth={max_depth}` to replicate `mode={mode}` behaviour."
-                )
-            else:
-                raise MisconfigurationException(
-                    f"`mode` can be {', '.join(ModelSummaryMode.supported_types())}, got {mode}."
-                )
 
         if not isinstance(max_depth, int) or max_depth < -1:
             raise ValueError(f"`max_depth` can be -1, 0 or > 0, got {max_depth}.")
@@ -282,12 +261,15 @@ class ModelSummary:
         input_ = model.example_input_array
         input_ = model._apply_batch_transfer_handler(input_)
 
-        if trainer is not None and trainer.amp_backend == AMPType.NATIVE and trainer._device_type != DeviceType.TPU:
-            model.forward = torch.cuda.amp.autocast()(model.forward)
-
         mode = model.training
         model.eval()
-        with torch.no_grad():
+
+        if trainer is not None:
+            forward_context = trainer.precision_plugin.forward_context()
+        else:
+            forward_context = contextlib.nullcontext()
+
+        with torch.no_grad(), forward_context:
             # let the model hooks collect the input- and output shapes
             if isinstance(input_, (list, tuple)):
                 model(*input_)
@@ -309,8 +291,8 @@ class ModelSummary:
             ("Params", list(map(get_human_readable_count, self.param_nums))),
         ]
         if self._model.example_input_array is not None:
-            arrays.append(("In sizes", self.in_sizes))
-            arrays.append(("Out sizes", self.out_sizes))
+            arrays.append(("In sizes", [str(x) for x in self.in_sizes]))
+            arrays.append(("Out sizes", [str(x) for x in self.out_sizes]))
 
         return arrays
 
@@ -436,17 +418,11 @@ def _is_lazy_weight_tensor(p: Tensor) -> bool:
     return False
 
 
-def summarize(
-    lightning_module: "pl.LightningModule", mode: Optional[str] = None, max_depth: Optional[int] = None
-) -> ModelSummary:
+def summarize(lightning_module: "pl.LightningModule", max_depth: int = 1) -> ModelSummary:
     """Summarize the LightningModule specified by `lightning_module`.
 
     Args:
         lightning_module: `LightningModule` to summarize.
-        mode: Can be either ``'top'`` (summarize only direct submodules) or ``'full'`` (summarize all layers).
-
-            .. deprecated:: v1.4
-                This parameter was deprecated in v1.4 in favor of `max_depth` and will be removed in v1.6.
 
         max_depth: The maximum depth of layer nesting that the summary will include. A value of 0 turns the
             layer summary off. Default: 1.
@@ -454,22 +430,4 @@ def summarize(
     Return:
         The model summary object
     """
-
-    # temporary mapping from mode to max_depth
-    if max_depth is None:
-        if mode is None:
-            model_summary = ModelSummary(lightning_module, max_depth=1)
-        elif mode in ModelSummaryMode.supported_types():
-            max_depth = ModelSummaryMode.get_max_depth(mode)
-            rank_zero_deprecation(
-                "Argument `mode` in `LightningModule.summarize` is deprecated in v1.4"
-                f" and will be removed in v1.6. Use `max_depth={max_depth}` to replicate `mode={mode}` behavior."
-            )
-            model_summary = ModelSummary(lightning_module, max_depth=max_depth)
-        else:
-            raise MisconfigurationException(
-                f"`mode` can be None, {', '.join(ModelSummaryMode.supported_types())}, got {mode}"
-            )
-    else:
-        model_summary = ModelSummary(lightning_module, max_depth=max_depth)
-    return model_summary
+    return ModelSummary(lightning_module, max_depth=max_depth)

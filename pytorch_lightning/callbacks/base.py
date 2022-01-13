@@ -73,11 +73,21 @@ class Callback(abc.ABC):
         pass
 
     def on_init_start(self, trainer: "pl.Trainer") -> None:
-        """Called when the trainer initialization begins, model has not yet been set."""
+        r"""
+        .. deprecated:: v1.6
+            This callback hook was deprecated in v1.6 and will be removed in v1.8.
+
+        Called when the trainer initialization begins, model has not yet been set.
+        """
         pass
 
     def on_init_end(self, trainer: "pl.Trainer") -> None:
-        """Called when the trainer initialization ends, model has not yet been set."""
+        r"""
+        .. deprecated:: v1.6
+            This callback hook was deprecated in v1.6 and will be removed in v1.8.
+
+        Called when the trainer initialization ends, model has not yet been set.
+        """
         pass
 
     def on_fit_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
@@ -97,7 +107,12 @@ class Callback(abc.ABC):
         pass
 
     def on_train_batch_start(
-        self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", batch: Any, batch_idx: int, dataloader_idx: int
+        self,
+        trainer: "pl.Trainer",
+        pl_module: "pl.LightningModule",
+        batch: Any,
+        batch_idx: int,
+        unused: int = 0,
     ) -> None:
         """Called when the train batch begins."""
         pass
@@ -109,7 +124,7 @@ class Callback(abc.ABC):
         outputs: STEP_OUTPUT,
         batch: Any,
         batch_idx: int,
-        dataloader_idx: int,
+        unused: int = 0,
     ) -> None:
         """Called when the train batch ends."""
         pass
@@ -164,6 +179,10 @@ class Callback(abc.ABC):
         """Called when the training batch begins."""
         pass
 
+    def on_batch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        """Called when the training batch ends."""
+        pass
+
     def on_validation_batch_start(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", batch: Any, batch_idx: int, dataloader_idx: int
     ) -> None:
@@ -216,10 +235,6 @@ class Callback(abc.ABC):
         dataloader_idx: int,
     ) -> None:
         """Called when the predict batch ends."""
-        pass
-
-    def on_batch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
-        """Called when the training batch ends."""
         pass
 
     def on_train_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
@@ -322,5 +337,5 @@ class Callback(abc.ABC):
         pass
 
     def on_before_zero_grad(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", optimizer: Optimizer) -> None:
-        """Called after ``optimizer.step()`` and before ``optimizer.zero_grad()``."""
+        """Called before ``optimizer.zero_grad()``."""
         pass

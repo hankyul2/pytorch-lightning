@@ -19,6 +19,7 @@ import logging
 import os
 from argparse import Namespace
 from copy import deepcopy
+from enum import Enum
 from typing import Any, Callable, Dict, IO, MutableMapping, Optional, Union
 from warnings import warn
 
@@ -29,6 +30,7 @@ from pytorch_lightning.utilities import _OMEGACONF_AVAILABLE, AttributeDict, ran
 from pytorch_lightning.utilities.apply_func import apply_to_collection
 from pytorch_lightning.utilities.cloud_io import get_filesystem
 from pytorch_lightning.utilities.cloud_io import load as pl_load
+from pytorch_lightning.utilities.migration import pl_legacy_patch
 from pytorch_lightning.utilities.parsing import parse_class_init_keys
 
 log = logging.getLogger(__name__)
@@ -60,9 +62,9 @@ class ModelIO:
     ):
         r"""
         Primary way of loading a model from a checkpoint. When Lightning saves a checkpoint
-        it stores the arguments passed to `__init__`  in the checkpoint under `hyper_parameters`
+        it stores the arguments passed to ``__init__``  in the checkpoint under ``"hyper_parameters"``.
 
-        Any arguments specified through \*args and \*\*kwargs will override args stored in `hyper_parameters`.
+        Any arguments specified through \*\*kwargs will override args stored in ``"hyper_parameters"``.
 
         Args:
             checkpoint_path: Path to checkpoint. This can also be a URL, or file-like object
@@ -84,11 +86,11 @@ class ModelIO:
                 These will be converted into a :class:`~dict` and passed into your
                 :class:`LightningModule` for use.
 
-                If your model's `hparams` argument is :class:`~argparse.Namespace`
+                If your model's ``hparams`` argument is :class:`~argparse.Namespace`
                 and .yaml file has hierarchical structure, you need to refactor your model to treat
-                `hparams` as :class:`~dict`.
+                ``hparams`` as :class:`~dict`.
             strict: Whether to strictly enforce that the keys in :attr:`checkpoint_path` match the keys
-                returned by this module's state dict. Default: `True`.
+                returned by this module's state dict.
             kwargs: Any extra keyword args needed to init the model. Can also be used to override saved
                 hyperparameter values.
 
@@ -117,7 +119,7 @@ class ModelIO:
             MyLightningModule.load_from_checkpoint(
                 PATH,
                 num_layers=128,
-                pretrained_ckpt_path: NEW_PATH,
+                pretrained_ckpt_path=NEW_PATH,
             )
 
             # predict
@@ -125,10 +127,11 @@ class ModelIO:
             pretrained_model.freeze()
             y_hat = pretrained_model(x)
         """
-        if map_location is not None:
-            checkpoint = pl_load(checkpoint_path, map_location=map_location)
-        else:
-            checkpoint = pl_load(checkpoint_path, map_location=lambda storage, loc: storage)
+        with pl_legacy_patch():
+            if map_location is not None:
+                checkpoint = pl_load(checkpoint_path, map_location=map_location)
+            else:
+                checkpoint = pl_load(checkpoint_path, map_location=lambda storage, loc: storage)
 
         if hparams_file is not None:
             extension = hparams_file.split(".")[-1]
@@ -221,6 +224,10 @@ class ModelIO:
         Args:
             checkpoint: A dictionary in which you can save variables to save in a checkpoint.
                 Contents need to be pickleable.
+
+        .. deprecated:: v1.6
+            This method is deprecated in v1.6 and will be removed in v1.8.
+            Please use ``LightningModule.on_save_checkpoint`` instead.
         """
 
     def on_hpc_load(self, checkpoint: Dict[str, Any]) -> None:
@@ -228,6 +235,10 @@ class ModelIO:
 
         Args:
             checkpoint: A dictionary with variables from the checkpoint.
+
+        .. deprecated:: v1.6
+            This method is deprecated in v1.6 and will be removed in v1.8.
+            Please use ``LightningModule.on_load_checkpoint`` instead.
         """
 
 
@@ -285,7 +296,7 @@ def load_hparams_from_tags_csv(tags_csv: str) -> Dict[str, Any]:
     """
     fs = get_filesystem(tags_csv)
     if not fs.exists(tags_csv):
-        rank_zero_warn(f"Missing Tags: {tags_csv}.", RuntimeWarning)
+        rank_zero_warn(f"Missing Tags: {tags_csv}.", category=RuntimeWarning)
         return {}
 
     with fs.open(tags_csv, "r", newline="") as fp:
@@ -316,8 +327,8 @@ def load_hparams_from_yaml(config_yaml: str, use_omegaconf: bool = True) -> Dict
 
         Args:
             config_yaml: Path to config yaml file
-            use_omegaconf: If both `OMEGACONF_AVAILABLE` and `use_omegaconf` are True,
-                the hparams will be converted to `DictConfig` if possible
+            use_omegaconf: If omegaconf is available and ``use_omegaconf=True``,
+                the hparams will be converted to ``DictConfig`` if possible.
 
     >>> hparams = Namespace(batch_size=32, learning_rate=0.001, data_root='./any/path/here')
     >>> path_yaml = './testing-hparams.yaml'
@@ -329,11 +340,11 @@ def load_hparams_from_yaml(config_yaml: str, use_omegaconf: bool = True) -> Dict
     """
     fs = get_filesystem(config_yaml)
     if not fs.exists(config_yaml):
-        rank_zero_warn(f"Missing Tags: {config_yaml}.", RuntimeWarning)
+        rank_zero_warn(f"Missing Tags: {config_yaml}.", category=RuntimeWarning)
         return {}
 
     with fs.open(config_yaml, "r") as fp:
-        hparams = yaml.load(fp, Loader=yaml.UnsafeLoader)
+        hparams = yaml.full_load(fp)
 
     if _OMEGACONF_AVAILABLE:
         if use_omegaconf:
@@ -344,11 +355,14 @@ def load_hparams_from_yaml(config_yaml: str, use_omegaconf: bool = True) -> Dict
     return hparams
 
 
-def save_hparams_to_yaml(config_yaml, hparams: Union[dict, Namespace]) -> None:
+def save_hparams_to_yaml(config_yaml, hparams: Union[dict, Namespace], use_omegaconf: bool = True) -> None:
     """
     Args:
         config_yaml: path to new YAML file
         hparams: parameters to be saved
+        use_omegaconf: If omegaconf is available and ``use_omegaconf=True``,
+            the hparams will be converted to ``DictConfig`` if possible.
+
     """
     fs = get_filesystem(config_yaml)
     if not fs.isdir(os.path.dirname(config_yaml)):
@@ -361,7 +375,7 @@ def save_hparams_to_yaml(config_yaml, hparams: Union[dict, Namespace]) -> None:
         hparams = dict(hparams)
 
     # saving with OmegaConf objects
-    if _OMEGACONF_AVAILABLE:
+    if _OMEGACONF_AVAILABLE and use_omegaconf:
         # deepcopy: hparams from user shouldn't be resolved
         hparams = deepcopy(hparams)
         hparams = apply_to_collection(hparams, DictConfig, OmegaConf.to_container, resolve=True)
@@ -379,6 +393,7 @@ def save_hparams_to_yaml(config_yaml, hparams: Union[dict, Namespace]) -> None:
     # drop paramaters which contain some strange datatypes as fsspec
     for k, v in hparams.items():
         try:
+            v = v.name if isinstance(v, Enum) else v
             yaml.dump(v)
         except TypeError:
             warn(f"Skipping '{k}' parameter because it is not possible to safely dump to YAML.")

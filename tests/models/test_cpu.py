@@ -63,8 +63,12 @@ def test_cpu_slurm_save_load(tmpdir):
 
     # test HPC saving
     # simulate snapshot on slurm
-    saved_filepath = trainer.checkpoint_connector.hpc_save(trainer.weights_save_path, logger)
-    assert os.path.exists(saved_filepath)
+    # save logger to make sure we get all the metrics
+    if logger:
+        logger.finalize("finished")
+    hpc_save_path = trainer.checkpoint_connector.hpc_save_path(trainer.weights_save_path)
+    trainer.save_checkpoint(hpc_save_path)
+    assert os.path.exists(hpc_save_path)
 
     # new logger file to get meta
     logger = tutils.get_default_logger(tmpdir, version=version)
@@ -106,9 +110,8 @@ def test_early_stopping_cpu_model(tmpdir):
         callbacks=[stopping],
         default_root_dir=tmpdir,
         gradient_clip_val=1.0,
-        overfit_batches=0.20,
         track_grad_norm=2,
-        progress_bar_refresh_rate=0,
+        enable_progress_bar=False,
         accumulate_grad_batches=2,
         limit_train_batches=0.1,
         limit_val_batches=0.1,
@@ -122,20 +125,20 @@ def test_early_stopping_cpu_model(tmpdir):
     model.unfreeze()
 
 
-@RunIf(skip_windows=True)
+@RunIf(skip_windows=True, skip_49370=True)
 def test_multi_cpu_model_ddp(tmpdir):
     """Make sure DDP works."""
-    tutils.set_random_master_port()
+    tutils.set_random_main_port()
 
     trainer_options = dict(
         default_root_dir=tmpdir,
-        progress_bar_refresh_rate=0,
+        enable_progress_bar=False,
         max_epochs=1,
         limit_train_batches=0.4,
         limit_val_batches=0.2,
         gpus=None,
         num_processes=2,
-        accelerator="ddp_cpu",
+        strategy="ddp_spawn",
     )
 
     dm = ClassifDataModule()
@@ -159,8 +162,7 @@ def test_lbfgs_cpu_model(tmpdir):
     trainer_options = dict(
         default_root_dir=tmpdir,
         max_epochs=1,
-        progress_bar_refresh_rate=0,
-        weights_summary="top",
+        enable_progress_bar=False,
         limit_train_batches=0.2,
         limit_val_batches=0.2,
     )
@@ -176,7 +178,7 @@ def test_default_logger_callbacks_cpu_model(tmpdir):
         max_epochs=1,
         gradient_clip_val=1.0,
         overfit_batches=0.20,
-        progress_bar_refresh_rate=0,
+        enable_progress_bar=False,
         limit_train_batches=0.01,
         limit_val_batches=0.01,
     )
@@ -214,7 +216,7 @@ def test_running_test_after_fitting(tmpdir):
     # fit model
     trainer = Trainer(
         default_root_dir=tmpdir,
-        progress_bar_refresh_rate=0,
+        enable_progress_bar=False,
         max_epochs=2,
         limit_train_batches=0.4,
         limit_val_batches=0.2,
@@ -258,7 +260,7 @@ def test_running_test_no_val(tmpdir):
     # fit model
     trainer = Trainer(
         default_root_dir=tmpdir,
-        progress_bar_refresh_rate=0,
+        enable_progress_bar=False,
         max_epochs=1,
         limit_train_batches=0.4,
         limit_val_batches=0.2,
@@ -291,7 +293,7 @@ def test_simple_cpu(tmpdir):
 def test_cpu_model(tmpdir):
     """Make sure model trains on CPU."""
     trainer_options = dict(
-        default_root_dir=tmpdir, progress_bar_refresh_rate=0, max_epochs=1, limit_train_batches=4, limit_val_batches=4
+        default_root_dir=tmpdir, enable_progress_bar=False, max_epochs=1, limit_train_batches=4, limit_val_batches=4
     )
 
     model = BoringModel()
@@ -305,7 +307,7 @@ def test_all_features_cpu_model(tmpdir):
         gradient_clip_val=1.0,
         overfit_batches=0.20,
         track_grad_norm=2,
-        progress_bar_refresh_rate=0,
+        enable_progress_bar=False,
         accumulate_grad_batches=2,
         max_epochs=1,
         limit_train_batches=0.4,

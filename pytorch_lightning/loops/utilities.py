@@ -13,18 +13,25 @@
 # limitations under the License.
 from collections import OrderedDict
 from contextlib import contextmanager
-from typing import Any, Dict, Generator, Iterator, Optional, Sequence
+from datetime import timedelta
+from functools import lru_cache
+from typing import Any, Dict, Generator, Iterator, List, Optional, Sequence, Tuple, Union
 
+import numpy as np
 import torch
 from torch.optim import Optimizer
 
 import pytorch_lightning as pl
-from pytorch_lightning.plugins import ParallelPlugin
+from pytorch_lightning.loops import Loop
+from pytorch_lightning.strategies import ParallelStrategy
+from pytorch_lightning.trainer.progress import BaseProgress
+from pytorch_lightning.utilities import rank_zero_warn
 from pytorch_lightning.utilities.exceptions import MisconfigurationException
 from pytorch_lightning.utilities.fetching import AbstractDataFetcher, DataLoaderIterDataFetcher
 from pytorch_lightning.utilities.memory import recursive_detach
 from pytorch_lightning.utilities.signature_utils import is_param_in_hook_signature
 from pytorch_lightning.utilities.types import STEP_OUTPUT
+from pytorch_lightning.utilities.warnings import PossibleUserWarning
 
 
 def check_finite_loss(loss: Optional[torch.Tensor]) -> None:
@@ -44,20 +51,53 @@ def _extract_hiddens(training_step_output: STEP_OUTPUT, truncated_bptt_steps: in
         MisconfigurationException: If :attr:`~pytorch_lightning.core.Lightning.LightningModule.truncated_bptt_steps` is
             not enabled and hiddens are returned or vice versa.
     """
-    is_dict = isinstance(training_step_output, dict)
     if not truncated_bptt_steps:
-        if is_dict and "hiddens" in training_step_output:
+        if isinstance(training_step_output, dict) and "hiddens" in training_step_output:
             raise MisconfigurationException(
                 'You returned "hiddens" in your `training_step` but `truncated_bptt_steps` is disabled'
             )
-        return
-    elif not is_dict or "hiddens" not in training_step_output:
+        return None
+    if not isinstance(training_step_output, dict) or "hiddens" not in training_step_output:
         raise MisconfigurationException(
-            'You enabled `truncated_bptt_steps` but did not return "hiddens" in your `training_step`'
+            'You enabled `truncated_bptt_steps` but did not `return {..., "hiddens": ...}` in your `training_step`'
         )
     # detach hiddens to avoid `RuntimeError: Trying to backward through the graph a second time`
     hiddens = recursive_detach(training_step_output["hiddens"])
     return hiddens
+
+
+def _parse_loop_limits(
+    min_steps: Optional[int],
+    max_steps: int,
+    min_epochs: Optional[int],
+    max_epochs: int,
+    max_time: Optional[Union[str, timedelta, Dict[str, int]]],
+) -> Tuple[Optional[int], int, Optional[int], int, Optional[Union[str, timedelta, Dict[str, int]]]]:
+    """This utility computes the default values for the minimum and maximum number of steps and epochs given the
+    values the user has selected.
+
+    Args:
+        min_steps: Minimum number of steps.
+        max_steps: Maximum number of steps.
+        min_epochs: Minimum number of epochs.
+        max_epochs: Maximum number of epochs.
+        max_time: Maximum time for the training.
+
+    Returns:
+        The parsed limits, with default values being set for the ones that the user did not specify.
+    """
+    if max_epochs is None:
+        if max_steps == -1 and max_time is None:
+            rank_zero_warn(
+                "`max_epochs` was not set. Setting it to 1000 epochs. To train without an epoch limit,"
+                " set `max_epochs=-1`.",
+                category=PossibleUserWarning,
+            )
+            max_epochs = 1000
+        else:
+            max_epochs = -1
+    min_epochs = 1 if (min_epochs is None and min_steps is None and max_time is None) else min_epochs
+    return min_steps, max_steps, min_epochs, max_epochs, max_time
 
 
 def _build_training_step_kwargs(
@@ -112,20 +152,19 @@ def _build_training_step_kwargs(
     return step_kwargs
 
 
-def _prepare_dataloader_iter(data_fetcher: AbstractDataFetcher, batch_idx: int) -> Iterator:
+def _update_dataloader_iter(data_fetcher: AbstractDataFetcher, batch_idx: int) -> Iterator:
     """Attach the dataloader."""
     if not isinstance(data_fetcher, DataLoaderIterDataFetcher):
         # restore iteration
-        dataloader_iter = enumerate(data_fetcher, batch_idx)
+        return enumerate(data_fetcher, batch_idx)
     else:
-        dataloader_iter = iter(data_fetcher)
-    return dataloader_iter
+        return iter(data_fetcher)
 
 
 @contextmanager
 def _block_parallel_sync_behavior(trainer: "pl.Trainer", block: bool = True) -> Generator[None, None, None]:
-    """Blocks synchronization in :class:`~pytorch_lightning.plugins.training_type.parallel.ParallelPlugin`. This is
-    useful for example when when accumulating gradients to reduce communication when it is not needed.
+    """Blocks synchronization in :class:`~pytorch_lightning.strategies.parallel.ParallelStrategy`. This is useful
+    for example when when accumulating gradients to reduce communication when it is not needed.
 
     Args:
         trainer: the trainer instance with a reference to a training type plugin
@@ -134,8 +173,56 @@ def _block_parallel_sync_behavior(trainer: "pl.Trainer", block: bool = True) -> 
     Returns:
         context manager with sync behaviour off
     """
-    if isinstance(trainer.training_type_plugin, ParallelPlugin) and block:
-        with trainer.training_type_plugin.block_backward_sync():
+    if isinstance(trainer.strategy, ParallelStrategy) and block:
+        with trainer.strategy.block_backward_sync():
             yield None
     else:
         yield None
+
+
+@lru_cache(1)
+def _cumulative_optimizer_frequencies(frequencies: Tuple[int]) -> np.ndarray:
+    return np.cumsum(frequencies)
+
+
+def _get_active_optimizers(
+    optimizers: List[Optimizer], frequencies: List[int], batch_idx: Optional[int] = None
+) -> List[Tuple[int, Optimizer]]:
+    """Returns the currently active optimizers. When multiple optimizers are used with different frequencies, only
+    one of the optimizers is active at a time.
+
+    Returns:
+        A list of tuples (opt_idx, optimizer) of currently active optimizers.
+    """
+    if not frequencies:
+        # call training_step once per optimizer
+        return list(enumerate(optimizers))
+
+    freq_cumsum = _cumulative_optimizer_frequencies(tuple(frequencies))
+    optimizers_loop_length = freq_cumsum[-1]
+    current_place_in_loop = batch_idx % optimizers_loop_length
+
+    # find optimizer index by looking for the first {item > current_place} in the cumsum list
+    opt_idx = np.searchsorted(freq_cumsum, current_place_in_loop, side="right")
+    return [(opt_idx, optimizers[opt_idx])]
+
+
+def _is_max_limit_reached(current: int, maximum: int = -1) -> bool:
+    """Check if the limit has been reached (if enabled).
+
+    Args:
+        current: the current value
+        maximum: the maximum value (or -1 to disable limit)
+
+    Returns:
+        bool: whether the limit has been reached
+    """
+    return maximum != -1 and current >= maximum
+
+
+def _reset_progress(loop: Loop) -> None:
+    for v in vars(loop).values():
+        if isinstance(v, BaseProgress):
+            v.reset()
+        elif isinstance(v, Loop):
+            _reset_progress(v)

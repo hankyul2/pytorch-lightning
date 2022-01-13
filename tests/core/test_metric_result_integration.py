@@ -27,8 +27,13 @@ from torchmetrics import Metric, MetricCollection
 import tests.helpers.utils as tutils
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.trainer.connectors.logger_connector.result import ResultCollection
-from pytorch_lightning.utilities.imports import _fault_tolerant_training, _TORCH_GREATER_EQUAL_1_7
+from pytorch_lightning.trainer.connectors.logger_connector.result import (
+    _Metadata,
+    _ResultCollection,
+    _ResultMetric,
+    _Sync,
+)
+from pytorch_lightning.utilities.imports import _fault_tolerant_training
 from tests.helpers import BoringModel
 from tests.helpers.runif import RunIf
 
@@ -66,7 +71,7 @@ def _ddp_test_fn(rank, worldsize):
     metric_b = metric_b.to(f"cuda:{rank}")
     metric_c = metric_c.to(f"cuda:{rank}")
 
-    result = ResultCollection(True, torch.device(f"cuda:{rank}"))
+    result = _ResultCollection(True, torch.device(f"cuda:{rank}"))
 
     for _ in range(3):
         cumulative_sum = 0
@@ -98,7 +103,7 @@ def _ddp_test_fn(rank, worldsize):
 @RunIf(skip_windows=True, min_gpus=2)
 def test_result_reduce_ddp():
     """Make sure result logging works with DDP."""
-    tutils.set_random_master_port()
+    tutils.set_random_main_port()
 
     worldsize = 2
     mp.spawn(_ddp_test_fn, args=(worldsize,), nprocs=worldsize)
@@ -109,7 +114,7 @@ def test_result_metric_integration():
     metric_b = DummyMetric()
     metric_c = DummyMetric()
 
-    result = ResultCollection(True, torch.device("cpu"))
+    result = _ResultCollection(True, torch.device("cpu"))
 
     for _ in range(3):
         cumulative_sum = 0
@@ -140,26 +145,26 @@ def test_result_metric_integration():
     result.minimize = torch.tensor(1.0)
     result.extra = {}
     assert str(result) == (
-        "ResultCollection("
+        "_ResultCollection("
         "{"
-        "'h.a': ResultMetric('a', value=DummyMetric()), "
-        "'h.b': ResultMetric('b', value=DummyMetric()), "
-        "'h.c': ResultMetric('c', value=DummyMetric())"
+        "'h.a': _ResultMetric('a', value=DummyMetric()), "
+        "'h.b': _ResultMetric('b', value=DummyMetric()), "
+        "'h.c': _ResultMetric('c', value=DummyMetric())"
         "})"
     )
     assert repr(result) == (
         "{"
         "True, "
         "device(type='cpu'), "
-        "{'h.a': ResultMetric('a', value=DummyMetric()), "
-        "'h.b': ResultMetric('b', value=DummyMetric()), "
-        "'h.c': ResultMetric('c', value=DummyMetric())"
+        "{'h.a': _ResultMetric('a', value=DummyMetric()), "
+        "'h.b': _ResultMetric('b', value=DummyMetric()), "
+        "'h.c': _ResultMetric('c', value=DummyMetric())"
         "}}"
     )
 
 
 def test_result_collection_simple_loop():
-    result = ResultCollection(True, torch.device("cpu"))
+    result = _ResultCollection(True, torch.device("cpu"))
     current_fx_name = None
     batch_idx = None
 
@@ -207,7 +212,7 @@ def my_sync_dist(x, *_, **__):
 def test_result_collection_restoration(tmpdir):
     """This test make sure metrics are properly reloaded on failure."""
 
-    result = ResultCollection(True, torch.device("cpu"))
+    result = _ResultCollection(True, torch.device("cpu"))
     metric_a = DummyMetric()
     metric_b = DummyMetric()
     metric_c = DummyMetric()
@@ -248,7 +253,7 @@ def test_result_collection_restoration(tmpdir):
             assert set(batch_log["c_1"]) == {"1", "2"}
 
             result_copy = deepcopy(result)
-            new_result = ResultCollection(True, torch.device("cpu"))
+            new_result = _ResultCollection(True, torch.device("cpu"))
             state_dict = result.state_dict()
             # check the sync fn was dropped
             assert "fn" not in state_dict["items"]["training_step.a"]["meta"]["_sync"]
@@ -316,7 +321,7 @@ def test_lightning_module_logging_result_collection(tmpdir, device):
             assert state_dict["items"]["validation_step.v"]["value"].device.type == device
 
             # sync fn should be kept
-            assert results["validation_step.v"].meta.sync.fn == self.trainer.training_type_plugin.reduce
+            assert results["validation_step.v"].meta.sync.fn == self.trainer.strategy.reduce
 
             # sync fn dropped from the state dict
             assert "fn" not in state_dict["items"]["validation_step.v"]["meta"]["_sync"]
@@ -326,10 +331,10 @@ def test_lightning_module_logging_result_collection(tmpdir, device):
             assert results["validation_step.v"].value.device.type == device
 
             # sync fn was preserved in the original result
-            assert results["validation_step.v"].meta.sync.fn == self.trainer.training_type_plugin.reduce
+            assert results["validation_step.v"].meta.sync.fn == self.trainer.strategy.reduce
 
             # default sync fn
-            new_results = ResultCollection(False, device)
+            new_results = _ResultCollection(False, device)
             new_results.load_state_dict(state_dict, map_location="cpu")
             assert new_results["validation_step.v"].meta.sync.fn is None
 
@@ -368,7 +373,7 @@ class DummyMeanMetric(Metric):
 
 def result_collection_reload(**kwargs):
 
-    """This test is going to validate ResultCollection is properly being reload and final accumulation with Fault
+    """This test is going to validate _ResultCollection is properly being reload and final accumulation with Fault
     Tolerant Training is correct."""
 
     if not _fault_tolerant_training():
@@ -453,36 +458,32 @@ def result_collection_reload(**kwargs):
     assert not model.has_validated_sum
 
     tmpdir = (
-        trainer.training_type_plugin.broadcast(trainer_kwargs["default_root_dir"], 0)
+        trainer.strategy.broadcast(trainer_kwargs["default_root_dir"], 0)
         if num_processes >= 2
         else trainer_kwargs["default_root_dir"]
     )
     ckpt_path = os.path.join(tmpdir, ".pl_auto_save.ckpt")
-    trainer_kwargs["resume_from_checkpoint"] = ckpt_path
 
     trainer = Trainer(**trainer_kwargs)
-    trainer.fit(model)
+    trainer.fit(model, ckpt_path=ckpt_path)
     assert model.has_validated_sum
 
 
 @mock.patch.dict(os.environ, {"PL_FAULT_TOLERANT_TRAINING": "1"})
-@pytest.mark.skipif(not _TORCH_GREATER_EQUAL_1_7, reason="Requires at least PyTorch 1.7")
 def test_result_collection_reload(tmpdir):
     result_collection_reload(default_root_dir=tmpdir)
 
 
 @RunIf(min_gpus=1)
 @mock.patch.dict(os.environ, {"PL_FAULT_TOLERANT_TRAINING": "1"})
-@pytest.mark.skipif(not _TORCH_GREATER_EQUAL_1_7, reason="Requires at least PyTorch 1.7")
 def test_result_collection_reload_1_gpu_ddp(tmpdir):
-    result_collection_reload(default_root_dir=tmpdir, accelerator="ddp", gpus=1)
+    result_collection_reload(default_root_dir=tmpdir, strategy="ddp", gpus=1)
 
 
-@RunIf(min_gpus=2, special=True)
+@RunIf(min_gpus=2, standalone=True)
 @mock.patch.dict(os.environ, {"PL_FAULT_TOLERANT_TRAINING": "1"})
-@pytest.mark.skipif(not _TORCH_GREATER_EQUAL_1_7, reason="Requires at least PyTorch 1.7")
 def test_result_collection_reload_2_gpus(tmpdir):
-    result_collection_reload(default_root_dir=tmpdir, accelerator="ddp", gpus=2)
+    result_collection_reload(default_root_dir=tmpdir, strategy="ddp", gpus=2)
 
 
 def test_metric_collections(tmpdir):
@@ -544,3 +545,75 @@ def test_metric_collections(tmpdir):
 
     trainer = Trainer(default_root_dir=tmpdir, max_epochs=2, limit_train_batches=2, limit_val_batches=0)
     trainer.fit(model)
+
+
+def test_metric_result_computed_check():
+    """Unittest ``_get_cache`` with multielement tensors."""
+    metadata = _Metadata("foo", "bar", on_epoch=True, enable_graph=True)
+    metadata.sync = _Sync()
+    rm = _ResultMetric(metadata, is_tensor=True)
+    computed_value = torch.tensor([1, 2, 3])
+    rm._computed = computed_value
+    cache = _ResultCollection._get_cache(rm, on_step=False)
+    # `enable_graph=True` so no detach, identity works
+    assert cache is computed_value
+
+
+@pytest.mark.parametrize("floating_dtype", (torch.float, torch.double))
+def test_metric_result_respects_dtype(floating_dtype):
+    torch.set_default_dtype(floating_dtype)
+    fixed_dtype = torch.long  # default by PyTorch
+
+    metadata = _Metadata("foo", "bar")
+    metadata.sync = _Sync()
+    rm = _ResultMetric(metadata, is_tensor=True)
+
+    assert rm.value.dtype == floating_dtype
+    assert rm.cumulated_batch_size.dtype == fixed_dtype
+
+    # two fixed point numbers - should be converted
+    value, batch_size = torch.tensor(2), 3
+    assert value.dtype == fixed_dtype
+    with pytest.warns(
+        UserWarning, match=rf"`self.log\('bar', ...\)` in your `foo` .* Converting it to {floating_dtype}"
+    ):
+        rm.update(value, batch_size)
+    # floating and fixed
+    rm.update(torch.tensor(4.0), 5)
+
+    total = rm.compute()
+
+    assert total == (2 * 3 + 4 * 5) / (5 + 3)
+    assert total.dtype == floating_dtype
+
+    # restore to avoid impacting other tests
+    torch.set_default_dtype(torch.float)
+
+
+@pytest.mark.parametrize("reduce_fx", ("mean", sum))
+def test_metric_result_dtype_promotion(reduce_fx):
+    metadata = _Metadata("foo", "bar", reduce_fx=reduce_fx)
+    metadata.sync = _Sync()
+    rm = _ResultMetric(metadata, is_tensor=True)
+    assert rm.value.dtype == torch.float
+
+    # log a double
+    rm.update(torch.tensor(0, dtype=torch.double), 1)
+    # `rm.value.dtype` is promoted
+    assert rm.value.dtype == torch.double
+    # log a float
+    rm.update(torch.tensor(0, dtype=torch.float), 1)
+    # the previous dtype stays
+    assert rm.value.dtype == torch.double
+
+    total = rm.compute()
+    assert total.dtype == torch.double
+
+
+@pytest.mark.parametrize(["reduce_fx", "expected"], [(max, -2), (min, 2)])
+def test_result_metric_max_min(reduce_fx, expected):
+    metadata = _Metadata("foo", "bar", reduce_fx=reduce_fx)
+    metadata.sync = _Sync()
+    rm = _ResultMetric(metadata, is_tensor=True)
+    rm.update(torch.tensor(expected), 1)
+    assert rm.compute() == expected

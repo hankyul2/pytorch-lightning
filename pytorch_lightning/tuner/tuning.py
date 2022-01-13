@@ -74,7 +74,6 @@ class Tuner:
         init_val: int = 2,
         max_trials: int = 25,
         batch_arg_name: str = "batch_size",
-        train_dataloader=None,  # TODO: remove with 1.6
     ) -> Optional[int]:
         """Iteratively try to find the largest batch size for a given model that does not give an out of memory
         (OOM) error.
@@ -84,7 +83,7 @@ class Tuner:
 
             train_dataloaders: A collection of :class:`torch.utils.data.DataLoader` or a
                 :class:`~pytorch_lightning.core.datamodule.LightningDataModule` specifying training samples.
-                In the case of multiple dataloaders, please see this :ref:`page <multiple-training-dataloaders>`.
+                In the case of multiple dataloaders, please see this :ref:`section <multiple-dataloaders>`.
 
             val_dataloaders: A :class:`torch.utils.data.DataLoader` or a sequence of them specifying validation samples.
 
@@ -117,7 +116,6 @@ class Tuner:
         result = self.trainer.tune(
             model,
             train_dataloaders=train_dataloaders,
-            train_dataloader=train_dataloader,  # TODO: deprecated - remove with 1.6
             val_dataloaders=val_dataloaders,
             datamodule=datamodule,
             scale_batch_size_kwargs={
@@ -143,7 +141,6 @@ class Tuner:
         mode: str = "exponential",
         early_stop_threshold: float = 4.0,
         update_attr: bool = False,
-        train_dataloader=None,  # TODO: remove with 1.6
     ) -> Optional[_LRFinder]:
         """Enables the user to do a range test of good initial learning rates, to reduce the amount of guesswork in
         picking a good starting learning rate.
@@ -153,7 +150,7 @@ class Tuner:
 
             train_dataloaders: A collection of :class:`torch.utils.data.DataLoader` or a
                 :class:`~pytorch_lightning.core.datamodule.LightningDataModule` specifying training samples.
-                In the case of multiple dataloaders, please see this :ref:`page <multiple-training-dataloaders>`.
+                In the case of multiple dataloaders, please see this :ref:`section <multiple-dataloaders>`.
 
             val_dataloaders: A :class:`torch.utils.data.DataLoader` or a sequence of them specifying validation samples.
 
@@ -185,7 +182,6 @@ class Tuner:
         result = self.trainer.tune(
             model,
             train_dataloaders=train_dataloaders,
-            train_dataloader=train_dataloader,  # TODO: deprecated - remove with 1.6
             val_dataloaders=val_dataloaders,
             datamodule=datamodule,
             lr_find_kwargs={

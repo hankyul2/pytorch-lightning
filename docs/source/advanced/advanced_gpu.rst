@@ -9,6 +9,14 @@ Note that some of the extreme memory saving configurations will affect the speed
 
 Some of these memory-efficient plugins rely on offloading onto other forms of memory, such as CPU RAM or NVMe. This means you can even see memory benefits on a **single GPU**, using a plugin such as :ref:`deepspeed-zero-stage-3-offload`.
 
+Check out this amazing video explaining model parallelism and how it works behind the scenes:
+
+.. raw:: html
+
+    <iframe width="540" height="300" src="https://www.youtube.com/embed/w_CKzh5C1K4" frameborder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
+
 Choosing an Advanced Distributed GPU Plugin
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -71,9 +79,9 @@ To use Sharded Training, you need to first install FairScale using the command b
 .. code-block:: python
 
     # train using Sharded DDP
-    trainer = Trainer(plugins="ddp_sharded")
+    trainer = Trainer(strategy="ddp_sharded")
 
-Sharded Training can work across all DDP variants by adding the additional ``--plugins ddp_sharded`` flag.
+Sharded Training can work across all DDP variants by adding the additional ``--strategy ddp_sharded`` flag.
 
 Internally we re-initialize your optimizers and shard them across your machines and processes. We handle all communication using PyTorch distributed, so no code changes are required.
 
@@ -109,7 +117,7 @@ To activate parameter sharding, you must wrap your model using provided ``wrap``
 When not using Fully Sharded these wrap functions are a no-op. This means once the changes have been made, there is no need to remove the changes for other plugins.
 
 ``auto_wrap`` will recursively wrap `torch.nn.Modules` within the ``LightningModule`` with nested Fully Sharded Wrappers,
-signalling that we'd like to partition these modules across data parallel devices, discarding the full weights when not required (information `here <https://fairscale.readthedocs.io/en/latest/api/nn/fsdp_tips.html>`__).
+signalling that we'd like to partition these modules across data parallel devices, discarding the full weights when not required (information :class:`here <fairscale.nn.fsdp>`).
 
 ``auto_wrap`` can have varying level of success based on the complexity of your model. **Auto Wrap does not support models with shared parameters**.
 
@@ -156,7 +164,7 @@ Below is an example of using both ``wrap`` and ``auto_wrap`` to create your mode
 
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="fsdp", precision=16)
+    trainer = Trainer(gpus=4, strategy="fsdp", precision=16)
     trainer.fit(model)
 
     trainer.test()
@@ -174,7 +182,7 @@ Activation checkpointing frees activations from memory as soon as they are not n
 
 FairScales' checkpointing wrapper also handles batch norm layers correctly unlike the PyTorch implementation, ensuring stats are tracked correctly due to the multiple forward passes.
 
-This saves memory when training larger models however requires wrapping modules you'd like to use activation checkpointing on. See `here <https://fairscale.readthedocs.io/en/latest/api/nn/misc/checkpoint_activations.html>`__ for more information.
+This saves memory when training larger models however requires wrapping modules you'd like to use activation checkpointing on. See :class:`here <fairscale.nn.checkpoint.checkpoint_wrapper>` for more information.
 
 .. warning::
 
@@ -248,7 +256,7 @@ It is recommended to skip Stage 1 and use Stage 2, which comes with larger memor
     from pytorch_lightning import Trainer
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_1", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_1", precision=16)
     trainer.fit(model)
 
 
@@ -265,7 +273,7 @@ As a result, benefits can also be seen on a single GPU. Do note that the default
     from pytorch_lightning import Trainer
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_2", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_2", precision=16)
     trainer.fit(model)
 
 .. code-block:: bash
@@ -283,10 +291,10 @@ Below we show an example of running `ZeRO-Offload <https://www.deepspeed.ai/tuto
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_2_offload", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_2_offload", precision=16)
     trainer.fit(model)
 
 
@@ -302,12 +310,12 @@ You can also modify the ZeRO-Offload parameters via the plugin as below.
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
 
     model = MyModel()
     trainer = Trainer(
         gpus=4,
-        plugins=DeepSpeedPlugin(offload_optimizer=True, allgather_bucket_size=5e8, reduce_bucket_size=5e8),
+        strategy=DeepSpeedStrategy(offload_optimizer=True, allgather_bucket_size=5e8, reduce_bucket_size=5e8),
         precision=16,
     )
     trainer.fit(model)
@@ -327,7 +335,7 @@ For even more speed benefit, DeepSpeed offers an optimized CPU version of ADAM c
 
     import pytorch_lightning
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
     from deepspeed.ops.adam import DeepSpeedCPUAdam
 
 
@@ -340,7 +348,7 @@ For even more speed benefit, DeepSpeed offers an optimized CPU version of ADAM c
 
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_2_offload", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_2_offload", precision=16)
     trainer.fit(model)
 
 
@@ -371,7 +379,7 @@ Also please have a look at our :ref:`deepspeed-zero-stage-3-tips` which contains
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
     from deepspeed.ops.adam import FusedAdam
 
 
@@ -383,7 +391,7 @@ Also please have a look at our :ref:`deepspeed-zero-stage-3-tips` which contains
 
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_3", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_3", precision=16)
     trainer.fit(model)
 
     trainer.test()
@@ -395,7 +403,7 @@ You can also use the Lightning Trainer to run predict or evaluate with DeepSpeed
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
 
 
     class MyModel(pl.LightningModule):
@@ -403,7 +411,7 @@ You can also use the Lightning Trainer to run predict or evaluate with DeepSpeed
 
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_3", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_3", precision=16)
     trainer.test(ckpt_path="my_saved_deepspeed_checkpoint.ckpt")
 
 
@@ -421,7 +429,7 @@ This reduces the time taken to initialize very large models, as well as ensure w
 
     import torch.nn as nn
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
     from deepspeed.ops.adam import FusedAdam
 
 
@@ -438,7 +446,7 @@ This reduces the time taken to initialize very large models, as well as ensure w
 
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_3", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_3", precision=16)
     trainer.fit(model)
 
     trainer.test()
@@ -459,18 +467,18 @@ DeepSpeed ZeRO Stage 3 Offloads optimizer state, gradients to the host CPU to re
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
 
     # Enable CPU Offloading
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_3_offload", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_3_offload", precision=16)
     trainer.fit(model)
 
     # Enable CPU Offloading, and offload parameters to CPU
     model = MyModel()
     trainer = Trainer(
         gpus=4,
-        plugins=DeepSpeedPlugin(
+        strategy=DeepSpeedStrategy(
             stage=3,
             offload_optimizer=True,
             offload_parameters=True,
@@ -488,18 +496,18 @@ Additionally, DeepSpeed supports offloading to NVMe drives for even larger model
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
 
     # Enable CPU Offloading
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_3_offload", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_3_offload", precision=16)
     trainer.fit(model)
 
     # Enable CPU Offloading, and offload parameters to CPU
     model = MyModel()
     trainer = Trainer(
         gpus=4,
-        plugins=DeepSpeedPlugin(
+        strategy=DeepSpeedStrategy(
             stage=3,
             offload_optimizer=True,
             offload_parameters=True,
@@ -533,7 +541,7 @@ This saves memory when training larger models, however requires using a checkpoi
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
     import deepspeed
 
 
@@ -547,16 +555,16 @@ This saves memory when training larger models, however requires using a checkpoi
 
         def forward(self, x):
             # Use the DeepSpeed checkpointing function instead of calling the module directly
-            # checkpointing self.layer_h means the activations are deleted after use,
+            # checkpointing self.block_1 means the activations are deleted after use,
             # and re-calculated during the backward passes
-            x = torch.utils.checkpoint.checkpoint(self.block_1, x)
+            x = deepspeed.checkpointing.checkpoint(self.block_1, x)
             return self.block_2(x)
 
 
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
     import deepspeed
 
 
@@ -576,12 +584,12 @@ This saves memory when training larger models, however requires using a checkpoi
     model = MyModel()
 
 
-    trainer = Trainer(gpus=4, plugins="deepspeed_stage_3_offload", precision=16)
+    trainer = Trainer(gpus=4, strategy="deepspeed_stage_3_offload", precision=16)
 
     # Enable CPU Activation Checkpointing
     trainer = Trainer(
         gpus=4,
-        plugins=DeepSpeedPlugin(
+        strategy=DeepSpeedStrategy(
             stage=3,
             offload_optimizer=True,  # Enable CPU Offloading
             cpu_checkpointing=True,  # (Optional) offload activations to CPU
@@ -601,7 +609,7 @@ Here is some helpful information when setting up DeepSpeed ZeRO Stage 3 with Lig
 * If you're using Adam or AdamW, ensure to use FusedAdam or DeepSpeedCPUAdam (for CPU Offloading) rather than the default torch optimizers as they come with large speed benefits
 * Treat your GPU/CPU memory as one large pool. In some cases, you may not want to offload certain things (like activations) to provide even more space to offload model parameters
 * When offloading to the CPU, make sure to bump up the batch size as GPU memory will be freed
-* We also support sharded checkpointing. By passing ``save_full_weights=False`` to the ``DeepSpeedPlugin``, we'll save shards of the model which allows you to save extremely large models. However to load the model and run test/validation/predict you must use the Trainer object.
+* We also support sharded checkpointing. By passing ``save_full_weights=False`` to the ``DeepSpeedStrategy``, we'll save shards of the model which allows you to save extremely large models. However to load the model and run test/validation/predict you must use the Trainer object.
 
 .. _deepspeed-zero-stage-3-single-file:
 
@@ -622,7 +630,7 @@ After training using ZeRO Stage 3, you'll notice that your checkpoints are a dir
 
 .. warning::
 
-    This single file checkpoint does not include the optimizer/lr-scheduler states. This means we cannot restore training via the `resume_from_checkpoint` Trainer argument. Ensure to keep the sharded checkpoint directory if this is required.
+    This single file checkpoint does not include the optimizer/lr-scheduler states. This means we cannot restore training via the ``trainer.fit(ckpt_path=)`` call. Ensure to keep the sharded checkpoint directory if this is required.
 
 Custom DeepSpeed Config
 """""""""""""""""""""""
@@ -636,7 +644,7 @@ In some cases you may want to define your own DeepSpeed Config, to access all pa
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
 
     deepspeed_config = {
         "zero_allow_untested_optimizer": True,
@@ -670,7 +678,7 @@ In some cases you may want to define your own DeepSpeed Config, to access all pa
     }
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins=DeepSpeedPlugin(deepspeed_config), precision=16)
+    trainer = Trainer(gpus=4, strategy=DeepSpeedStrategy(deepspeed_config), precision=16)
     trainer.fit(model)
 
 
@@ -679,10 +687,10 @@ We support taking the config as a json formatted file:
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DeepSpeedPlugin
+    from pytorch_lightning.strategies import DeepSpeedStrategy
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins=DeepSpeedPlugin("/path/to/deepspeed_config.json"), precision=16)
+    trainer = Trainer(gpus=4, strategy=DeepSpeedStrategy("/path/to/deepspeed_config.json"), precision=16)
     trainer.fit(model)
 
 
@@ -703,7 +711,7 @@ DDP Optimizations
 Gradients as Bucket View
 """"""""""""""""""""""""
 
-Enabling ``gradient_as_bucket_view=True`` in the ``DDPPlugin`` will make gradients views point to different offsets of the ``allreduce`` communication buckets. See `DistributedDataParallel <https://pytorch.org/docs/master/_modules/torch/nn/parallel/distributed.html#DistributedDataParallel>`__ for more information.
+Enabling ``gradient_as_bucket_view=True`` in the ``DDPStrategy`` will make gradients views point to different offsets of the ``allreduce`` communication buckets. See `DistributedDataParallel <https://pytorch.org/docs/master/_modules/torch/nn/parallel/distributed.html#DistributedDataParallel>`__ for more information.
 
 This can reduce peak memory usage and throughput as saved memory will be equal to the total gradient memory + removes the need to copy gradients to the ``allreduce`` communication buckets.
 
@@ -714,10 +722,10 @@ This can reduce peak memory usage and throughput as saved memory will be equal t
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DDPPlugin
+    from pytorch_lightning.strategies import DDPStrategy
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins=DDPPlugin(gradient_as_bucket_view=True))
+    trainer = Trainer(gpus=4, strategy=DDPStrategy(gradient_as_bucket_view=True))
     trainer.fit(model)
 
 DDP Communication Hooks
@@ -733,14 +741,14 @@ Enable `FP16 Compress Hook for multi-node throughput improvement <https://pytorc
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DDPPlugin
+    from pytorch_lightning.strategies import DDPStrategy
     from torch.distributed.algorithms.ddp_comm_hooks import (
         default_hooks as default,
         powerSGD_hook as powerSGD,
     )
 
     model = MyModel()
-    trainer = Trainer(gpus=4, plugins=DDPPlugin(ddp_comm_hook=default.fp16_compress_hook))
+    trainer = Trainer(gpus=4, strategy=DDPStrategy(ddp_comm_hook=default.fp16_compress_hook))
     trainer.fit(model)
 
 Enable `PowerSGD for multi-node throughput improvement <https://pytorch.org/docs/stable/ddp_comm_hooks.html#powersgd-communication-hook>`__:
@@ -752,13 +760,13 @@ Enable `PowerSGD for multi-node throughput improvement <https://pytorch.org/docs
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DDPPlugin
+    from pytorch_lightning.strategies import DDPStrategy
     from torch.distributed.algorithms.ddp_comm_hooks import powerSGD_hook as powerSGD
 
     model = MyModel()
     trainer = Trainer(
         gpus=4,
-        plugins=DDPPlugin(
+        strategy=DDPStrategy(
             ddp_comm_state=powerSGD.PowerSGDState(
                 process_group=None,
                 matrix_approximation_rank=1,
@@ -778,7 +786,7 @@ Combine hooks for accumulated benefit:
 .. code-block:: python
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DDPPlugin
+    from pytorch_lightning.strategies import DDPStrategy
     from torch.distributed.algorithms.ddp_comm_hooks import (
         default_hooks as default,
         powerSGD_hook as powerSGD,
@@ -787,7 +795,7 @@ Combine hooks for accumulated benefit:
     model = MyModel()
     trainer = Trainer(
         gpus=4,
-        plugins=DDPPlugin(
+        strategy=DDPStrategy(
             ddp_comm_state=powerSGD.PowerSGDState(
                 process_group=None,
                 matrix_approximation_rank=1,
